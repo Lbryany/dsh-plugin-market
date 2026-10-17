@@ -1,0 +1,18 @@
+{
+  "title": { "zh": "Lbryany 的 dsh 插件", "en": "Lbryany's dsh plugins" },
+  "description": {
+    "zh": "Lbryany 在 GitHub 上公开的 DeepSeek Harness 插件，按 tag 收录，可直接从发现页安装。",
+    "en": "DeepSeek Harness plugins published by Lbryany on GitHub, indexed by tag and installable from the Discover page."
+  },
+  "metadata": {
+    "categories": {
+      "provider": { "title": { "zh": "模型接入", "en": "Model providers" } },
+      "workflow": { "title": { "zh": "工作流", "en": "Workflow" } }
+    },
+    "labels": {
+      "web": { "title": { "zh": "Web 界面", "en": "Web UI" } },
+      "headless": { "title": { "zh": "无界面", "en": "Headless" } }
+    },
+    "sortKeys": {}
+  }
+}

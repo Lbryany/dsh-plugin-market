@@ -1,0 +1,24 @@
+{
+  "name": "dsh-plugin-market",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Lbryany 的 dsh 插件市场索引：从 GitHub 仓库 tag 生成 dsh 插件市场 format 1 索引",
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "build": "node scripts/build-index.mjs",
+    "check": "node scripts/check-index.mjs https://lbryany.github.io/dsh-plugin-market/index.json",
+    "test": "node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh-plugin-market-index": "0.2.1-rc.2",
+    "semver": "^7.8.5"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Lbryany/dsh-plugin-market.git"
+  }
+}

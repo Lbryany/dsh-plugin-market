@@ -8,8 +8,22 @@
 // - source 固定 git：url = https://github.com/<repo>.git，commit = tag 指向的 40 位 SHA；
 // - publishTimestamp = 该提交的 committer.date，单位秒（索引格式要求 Unix 秒，不是毫秒）；
 // - 一个仓库一个版本都收不进时整条插件丢掉（索引格式要求 versions 非空）。
+//
+// 单仓多插件（plugins.json 条目的可选 dir 字段，2026-10-19 第二步）：
+// 1. dir 是相对仓库根的 POSIX 目录，须匹配 ^[\w.-]+(/[\w.-]+)*$，任一段不能是 . 或 ..，
+//    不能为空串、不能以 / 开头或结尾；没有 dir = 仓库根一个插件（现状）。
+// 2. 有 dir 时只认 <dir 最后一段>-v<semver> 形状的 tag（如 dsh-peer-v0.1.0）；没有 dir 仍只认 v<semver>。
+//    不匹配的 tag 静默忽略（单仓里别的插件的 tag 对本条目就是"别的 tag"，裸 v0.1.0 也忽略）。
+// 3. 有 dir 时读 <dir>/package.json，version 与 tag 的 semver 相等；其余校验照旧。
+// 4. 有 dir 时版本 source 写 { type: 'git', url, commit, path: <dir> }，插件 repository 写 { url, directory: <dir> }；
+//    dsh 的 marketInstallTarget 据此拼出 git+<url>#<commit>&path:/<dir>。没有 dir 时不出现这两个键，输出与改前字节一致。
+// 5. plugins.json 唯一性是 repo + dir 不重复；同一仓库允许多条（不同 dir）。onlyRepo 照旧按 repo 过滤。
+// 6. icon 相对路径：有 dir 时先找 <dir>/<icon>，找不到回落仓库根并告警一句。
+// 7. 报告条目带 dir，CLI 打印成 <repo>/<dir>：收录 …
 
 const TAG = /^v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/u;
+const SEMVER_TAIL = '(\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?)';
+const DIR = /^[\w.-]+(\/[\w.-]+)*$/u;
 const COMMIT = /^[0-9a-f]{40}$/u;
 const MIME = {
   svg: 'image/svg+xml',
@@ -23,14 +37,14 @@ export const MAX_ICON_BYTES = 32 * 1024;
 
 /**
  * @param {object} input
- * @param {Array<{ repo: string, title?, description?, author?: string, category?: string, labels?: string[], icon?: string }>} input.plugins
+ * @param {Array<{ repo: string, dir?: string, title?, description?, author?: string, category?: string, labels?: string[], icon?: string }>} input.plugins
  * @param {{ title, description?, metadata: { categories, labels, sortKeys } }} input.meta
  * @param {{ tags(repo), file(repo, path, ref), commitDate(repo, sha) }} input.github
  * @param {{ semver, parseMarketIndex }} input.lib
  * @param {string} input.indexUrl
  * @param {(line: string) => void} [input.warn]
  * @param {string} [input.onlyRepo]
- * @returns {Promise<{ index: object, report: Array<{ repo, included: string[], skipped: Array<{ tag, reason }> }> }>}
+ * @returns {Promise<{ index: object, report: Array<{ repo, dir?, included: string[], skipped: Array<{ tag, reason }> }> }>}
  */
 export async function buildIndex({ plugins, meta, github, lib, indexUrl, warn = () => {}, onlyRepo }) {
   const { semver } = lib;
@@ -40,13 +54,17 @@ export async function buildIndex({ plugins, meta, github, lib, indexUrl, warn = 
 
   const out = [];
   const report = [];
-  const seenRepos = new Set();
+  const seen = new Set();
   for (const entry of plugins) {
     if (typeof entry?.repo !== 'string' || !/^[\w.-]+\/[\w.-]+$/u.test(entry.repo)) {
       throw new Error(`plugins.json：repo 必须是 owner/name 形状，得到 ${JSON.stringify(entry?.repo)}`);
     }
-    if (seenRepos.has(entry.repo)) throw new Error(`plugins.json：仓库 ${entry.repo} 重复`);
-    seenRepos.add(entry.repo);
+    const dir = dirOf(entry);
+    const key = `${entry.repo}\0${dir ?? ''}`;
+    if (seen.has(key)) {
+      throw new Error(dir === undefined ? `plugins.json：仓库 ${entry.repo} 重复` : `plugins.json：仓库 ${entry.repo} 的目录 ${dir} 重复`);
+    }
+    seen.add(key);
     if (onlyRepo && entry.repo !== onlyRepo) continue;
     if (entry.category !== undefined && !declaredCategories.has(entry.category)) {
       throw new Error(`plugins.json：${entry.repo} 的 category "${entry.category}" 没有在 index.meta.json 声明`);
@@ -55,15 +73,15 @@ export async function buildIndex({ plugins, meta, github, lib, indexUrl, warn = 
       if (!declaredLabels.has(label)) throw new Error(`plugins.json：${entry.repo} 的 label "${label}" 没有在 index.meta.json 声明`);
     }
 
-    const { versions, manifests, skipped } = await collectVersions(entry.repo, github, semver, warn);
+    const { versions, manifests, tagNames, skipped } = await collectVersions(entry.repo, dir, github, semver, warn);
     const included = versions.map((v) => v.version);
-    report.push({ repo: entry.repo, included, skipped });
+    report.push({ repo: entry.repo, ...(dir === undefined ? {} : { dir }), included, skipped });
     if (versions.length === 0) {
-      warn(`${entry.repo}：没有可收录的版本，整条插件跳过`);
+      warn(`${labelOf(entry.repo, dir)}：没有可收录的版本，整条插件跳过`);
       continue;
     }
     const latest = manifests.get(versions[0].version);
-    const plugin = await pluginEntry(entry, latest, versions, github, warn);
+    const plugin = await pluginEntry(entry, dir, latest, versions, tagNames.get(versions[0].version), github, warn);
     out.push(plugin);
   }
 
@@ -89,17 +107,42 @@ function validateMeta(meta) {
   }
 }
 
-async function collectVersions(repo, github, semver, warn) {
+/** 校验并返回条目的 dir；没有 dir 返回 undefined。 */
+function dirOf(entry) {
+  if (!('dir' in entry) || entry.dir === undefined) return undefined;
+  const dir = entry.dir;
+  const bad = typeof dir !== 'string' || !DIR.test(dir) || dir.split('/').some((s) => s === '.' || s === '..');
+  if (bad) {
+    throw new Error(`plugins.json：${entry.repo} 的 dir ${JSON.stringify(dir)} 不合法（须是相对仓库根的 POSIX 目录，不能为空、不能以 / 开头或结尾、不能含 . 或 .. 段）`);
+  }
+  return dir;
+}
+
+function labelOf(repo, dir) {
+  return dir === undefined ? repo : `${repo}/${dir}`;
+}
+
+/** 有 dir 时 tag 形状是 <dir 最后一段>-v<semver>，没有 dir 是 v<semver>。 */
+function tagPattern(dir) {
+  if (dir === undefined) return TAG;
+  const prefix = dir.split('/').pop().replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  return new RegExp(`^${prefix}-v${SEMVER_TAIL}$`, 'u');
+}
+
+async function collectVersions(repo, dir, github, semver, warn) {
   const tags = await github.tags(repo);
+  const pattern = tagPattern(dir);
+  const manifestPath = dir === undefined ? 'package.json' : `${dir}/package.json`;
   const versions = [];
   const manifests = new Map();
+  const tagNames = new Map();
   const skipped = [];
   const skip = (tag, reason) => {
     skipped.push({ tag, reason });
     warn(`${repo}@${tag}：跳过，${reason}`);
   };
   for (const tag of tags) {
-    const m = TAG.exec(tag?.name ?? '');
+    const m = pattern.exec(tag?.name ?? '');
     if (!m) continue; // 不是版本 tag，静默忽略
     const version = m[1];
     if (semver.valid(version) !== version) {
@@ -111,16 +154,16 @@ async function collectVersions(repo, github, semver, warn) {
       skip(tag.name, `tag 没有 40 位提交 SHA`);
       continue;
     }
-    const raw = await github.file(repo, 'package.json', tag.name);
+    const raw = await github.file(repo, manifestPath, tag.name);
     if (raw === undefined) {
-      skip(tag.name, `没有 package.json`);
+      skip(tag.name, `没有 ${manifestPath}`);
       continue;
     }
     let manifest;
     try {
       manifest = JSON.parse(raw.toString('utf8'));
     } catch (error) {
-      skip(tag.name, `package.json 不是合法 JSON（${error.message}）`);
+      skip(tag.name, `${manifestPath} 不是合法 JSON（${error.message}）`);
       continue;
     }
     if (manifest?.version !== version) {
@@ -151,15 +194,16 @@ async function collectVersions(repo, github, semver, warn) {
       continue;
     }
     manifests.set(version, manifest);
+    tagNames.set(version, tag.name);
     versions.push({
       version,
       publishTimestamp,
-      source: { type: 'git', url: `https://github.com/${repo}.git`, commit: sha },
+      source: { type: 'git', url: `https://github.com/${repo}.git`, commit: sha, ...(dir === undefined ? {} : { path: dir }) },
       engines: { dsh: engines },
     });
   }
   versions.sort((a, b) => semver.rcompare(a.version, b.version));
-  return { versions, manifests, skipped };
+  return { versions, manifests, tagNames, skipped };
 }
 
 /** engines.dsh 原样；缺失时按 dsh 的回落规则从 dsh peer 推导；都没有返回 undefined。 */
@@ -179,7 +223,7 @@ export function enginesOf(manifest) {
   return ranges.join(' ');
 }
 
-async function pluginEntry(entry, latest, versions, github, warn) {
+async function pluginEntry(entry, dir, latest, versions, ref, github, warn) {
   const name = latest.name;
   if (typeof name !== 'string' || name.trim() === '') throw new Error(`${entry.repo}：最新 tag 的 package.json 没有 name`);
   const title = localized(entry.title) ?? localized(latest.title);
@@ -187,7 +231,7 @@ async function pluginEntry(entry, latest, versions, github, warn) {
   const author = authorOf(entry.author) ?? authorOf(latest.author);
   const homepage = typeof latest.homepage === 'string' && URL.canParse(latest.homepage) ? latest.homepage : undefined;
   const keywords = Array.isArray(latest.keywords) ? latest.keywords.filter((k) => typeof k === 'string') : [];
-  const icon = await iconOf(entry, github, `v${versions[0].version}`, warn);
+  const icon = await iconOf(entry, dir, github, ref, warn);
   return {
     name,
     ...(title === undefined ? {} : { title }),
@@ -195,7 +239,7 @@ async function pluginEntry(entry, latest, versions, github, warn) {
     ...(icon === undefined ? {} : { icon }),
     ...(author === undefined ? {} : { author }),
     ...(homepage === undefined ? {} : { homepage }),
-    repository: { url: `https://github.com/${entry.repo}.git` },
+    repository: { url: `https://github.com/${entry.repo}.git`, ...(dir === undefined ? {} : { directory: dir }) },
     metadata: {
       ...(entry.category === undefined ? {} : { category: entry.category }),
       keywords,
@@ -219,23 +263,34 @@ function authorOf(author) {
   return undefined;
 }
 
-async function iconOf(entry, github, ref, warn) {
+async function iconOf(entry, dir, github, ref, warn) {
   const icon = entry.icon;
   if (typeof icon !== 'string' || icon.trim() === '') return undefined;
   if (/^https?:\/\//u.test(icon) || icon.startsWith('data:')) return icon;
+  const label = labelOf(entry.repo, dir);
   const ext = icon.split('.').pop()?.toLowerCase();
   const mime = MIME[ext];
   if (!mime) {
-    warn(`${entry.repo}：icon ${icon} 不是 svg / png / jpg / webp，丢弃`);
+    warn(`${label}：icon ${icon} 不是 svg / png / jpg / webp，丢弃`);
     return undefined;
   }
-  const bytes = await github.file(entry.repo, icon, ref);
+  // 有 dir 时 icon 相对 <dir>；找不到再回落仓库根并告警
+  let bytes;
+  if (dir !== undefined) {
+    bytes = await github.file(entry.repo, `${dir}/${icon}`, ref);
+    if (bytes === undefined) {
+      bytes = await github.file(entry.repo, icon, ref);
+      if (bytes !== undefined) warn(`${label}：icon ${dir}/${icon} 在 ${ref} 不存在，回落用仓库根的 ${icon}`);
+    }
+  } else {
+    bytes = await github.file(entry.repo, icon, ref);
+  }
   if (bytes === undefined) {
-    warn(`${entry.repo}：icon ${icon} 在 ${ref} 不存在，丢弃`);
+    warn(`${label}：icon ${icon} 在 ${ref} 不存在，丢弃`);
     return undefined;
   }
   if (bytes.length > MAX_ICON_BYTES) {
-    warn(`${entry.repo}：icon ${icon} 有 ${bytes.length} 字节，超过 32 KiB，丢弃`);
+    warn(`${label}：icon ${icon} 有 ${bytes.length} 字节，超过 32 KiB，丢弃`);
     return undefined;
   }
   return `data:${mime};base64,${bytes.toString('base64')}`;

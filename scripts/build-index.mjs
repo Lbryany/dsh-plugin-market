@@ -47,7 +47,7 @@ async function main() {
   });
   for (const r of report) {
     const reasons = r.skipped.map((s) => `${s.tag}：${s.reason}`).join('；');
-    console.error(`${r.repo}：收录 ${r.included.length} 个版本${r.included.length ? `（${r.included.join('、')}）` : ''}，跳过 ${r.skipped.length} 个${reasons ? `（${reasons}）` : ''}`);
+    console.error(`${r.dir === undefined ? r.repo : `${r.repo}/${r.dir}`}：收录 ${r.included.length} 个版本${r.included.length ? `（${r.included.join('、')}）` : ''}，跳过 ${r.skipped.length} 个${reasons ? `（${reasons}）` : ''}`);
   }
   const text = `${JSON.stringify(index, null, 2)}\n`;
   if (args.dryRun) {

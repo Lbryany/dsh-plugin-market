@@ -28,6 +28,18 @@
 - **tag 名是 `v<版本>`**，并且该 tag 下 `package.json` 的 `version` 与之相等；不相等的 tag 会被跳过并在生成日志里告警。
 - 可选：`plugins.json` 里给 `title` / `description`（中英文）、`author`、`icon`（仓库内 svg / png / jpg / webp 相对路径，解码后不超过 32 KiB，或一个 https URL）。
 
+### 单仓多插件
+
+一个仓库里可以放多个插件（每个插件一个子目录，例如 `Lbryany/dsh-plugins`），`plugins.json` 里每个插件一条，用可选字段 **`dir`** 指明子目录：
+
+- `dir` 是相对仓库根的 POSIX 目录，如 `dsh-peer` 或 `packages/dsh-peer`；不能为空，不能以 `/` 开头或结尾，不能含 `.` / `..` 段。没有 `dir` 就是仓库根一个插件。
+- **tag 名是 `<目录名>-v<版本>`**，目录名取 `dir` 的最后一段，例如 `dsh-peer-v0.1.0`。其他 tag（包括裸的 `v0.1.0` 和别的插件的 tag）对这一条静默忽略。
+- 读的是 **`<dir>/package.json`**，`version` 要与 tag 里的版本相等；`dsh.bundle`、`engines.dsh` 等要求与上面相同。
+- 索引里的版本来源会带上子目录（`source.path`，安装 spec 形如 `git+https://github.com/<owner>/<repo>.git#<commit>&path:/<dir>`），插件的 `repository.directory` 也是 `dir`。
+- **构建产物入库同样适用于子目录**：`<dir>/lib/` 等必须提交在仓库里，从 git 安装不会跑构建。
+- `icon` 相对路径先按 `<dir>/<icon>` 找，找不到回落仓库根（生成日志里会告警）。
+- 同一仓库可以有多条，但 `repo` + `dir` 不能重复。
+
 ## 往索引里加一个插件
 
 在 `plugins.json` 追加一条，`category` 与 `labels` 必须是 `index.meta.json` 里声明过的 id：
@@ -44,6 +56,19 @@
 }
 ```
 
+单仓多插件的子目录插件多一个 `dir`，tag 打成 `dsh-peer-v0.1.0` 这样：
+
+```json
+{
+  "repo": "Lbryany/dsh-plugins",
+  "dir": "dsh-peer",
+  "title": { "zh": "跨进程通信", "en": "Peer messaging" },
+  "category": "workflow",
+  "labels": ["headless"],
+  "author": "Lbryany"
+}
+```
+
 然后本地生成一次看看日志里有没有跳过与告警，提交后 Actions 会自动发布。
 
 ## 本地生成与校验
@@ -56,7 +81,7 @@ node scripts/build-index.mjs --repo Lbryany/dsh-herdr --dry-run   # 只跑一个
 node scripts/check-index.mjs https://lbryany.github.io/dsh-plugin-market/index.json   # 线上自检：200、JSON、无重定向、校验通过
 ```
 
-生成器只用 GitHub REST（`/repos/<r>/tags`、`/contents/package.json?ref=<tag>`、`/commits/<sha>`），不依赖 `gh`。没装依赖时校验器会回落到本机全局安装的 dsh（`npm root -g` 下）或 `DSH_INSTALL_DIR` 指向的目录。
+生成器只用 GitHub REST（`/repos/<r>/tags`、`/contents/package.json?ref=<tag>`（有 `dir` 时是 `/contents/<dir>/package.json`）、`/commits/<sha>`），不依赖 `gh`。没装依赖时校验器会回落到本机全局安装的 dsh（`npm root -g` 下）或 `DSH_INSTALL_DIR` 指向的目录。
 
 ## 目录
 

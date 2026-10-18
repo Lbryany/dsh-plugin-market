@@ -1,0 +1,73 @@
+# 生成索引并部署到 GitHub Pages；部署后对线上 URL 自检。
+# 触发：push main、每天一次（UTC 03:17）、手动。
+name: 发布索引到 Pages
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: 生成索引
+        run: node scripts/build-index.mjs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
+  verify:
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: 线上自检（Pages 生效有几十秒延迟，最多重试 6 次）
+        run: |
+          url="${{ needs.deploy.outputs.page_url }}index.json"
+          for i in 1 2 3 4 5 6; do
+            if node scripts/check-index.mjs "$url"; then exit 0; fi
+            echo "第 $i 次未通过，20 秒后重试"; sleep 20
+          done
+          exit 1
+

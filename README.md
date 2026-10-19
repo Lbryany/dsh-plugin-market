@@ -1,3 +1,6 @@
+> **已迁移（2026-10-19）**：本仓库已归档，只读。后续开发与发布都在 [Lbryany/dsh-plugins/market](https://github.com/Lbryany/dsh-plugins/tree/main/market)；新索引 URL 是 https://lbryany.github.io/dsh-plugins/index.json，本仓库的旧索引 URL 停在归档时的内容。
+> **Moved (2026-10-19)**: this repository is archived; development and releases continue at [Lbryany/dsh-plugins/market](https://github.com/Lbryany/dsh-plugins/tree/main/market)；新索引 URL 是 https://lbryany.github.io/dsh-plugins/index.json，本仓库的旧索引 URL 停在归档时的内容.
+
 # dsh-plugin-market · Lbryany 的 dsh 插件市场索引
 
 索引 URL：**`https://lbryany.github.io/dsh-plugin-market/index.json`**

@@ -16,6 +16,7 @@
 |---|---|---|
 | [Lbryany/dsh-codebuddy](https://github.com/Lbryany/dsh-codebuddy) | `@lbryany/dsh-codebuddy` | CodeBuddy OAuth、动态模型目录、推理强度控制（Web 界面） |
 | [Lbryany/dsh-herdr](https://github.com/Lbryany/dsh-herdr) | `@lbryany/dsh-herdr` | 会话生命周期状态同步到 Herdr（无界面） |
+| [Lbryany/dsh-plugins](https://github.com/Lbryany/dsh-plugins/tree/main/packages/dsh-peer)（`packages/dsh-peer`） | `@lbryany/dsh-peer` | 同机 dsh 会话之间的发现与消息投递（Web 与无界面） |
 
 ## 收录要求
 

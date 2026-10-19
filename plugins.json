@@ -30,5 +30,23 @@
       "headless"
     ],
     "author": "Lbryany"
+  },
+  {
+    "repo": "Lbryany/dsh-plugins",
+    "dir": "packages/dsh-peer",
+    "title": {
+      "zh": "dsh 会话互通",
+      "en": "dsh peer messaging"
+    },
+    "description": {
+      "zh": "同一台机器上 dsh 会话之间的发现与消息投递：peer_list / peer_send / peer_rename，跨进程、跨 profile、同进程都可用。",
+      "en": "Discovery and messaging between dsh sessions on the same machine (peer_list / peer_send / peer_rename), across processes, profiles, and within one process."
+    },
+    "category": "workflow",
+    "labels": [
+      "web",
+      "headless"
+    ],
+    "author": "Lbryany"
   }
 ]
